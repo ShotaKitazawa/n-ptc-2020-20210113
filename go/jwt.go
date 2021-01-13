@@ -1,9 +1,8 @@
 package main
 
 import (
-	"bufio"
+	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
@@ -18,9 +17,9 @@ const (
 )
 
 var (
-	jwtSecretKey              string
-	jwtRevocationListFilePath string
-	muForFile                 sync.Mutex
+	jwtSecretKey string
+	// jwtRevocationListFilePath string
+	muForFile sync.Mutex
 )
 
 type jwtPayload struct {
@@ -76,25 +75,35 @@ func authenticationJwt(headerAuthorization string) (*jwtPayload, error) {
 	}
 
 	// if already logged out
-	f, err := os.OpenFile(jwtRevocationListFilePath, os.O_RDONLY|os.O_CREATE, 0644)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	if exist := func() bool {
-		muForFile.Lock()
-		defer muForFile.Unlock()
-
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			if reqJwt == scanner.Text() {
-				return true
-			}
-		}
-		return false
-	}(); exist {
+	resp := rdb.Exists(context.Background(), reqJwt)
+	if resp.Err() != nil {
+		fmt.Printf("Unknown Error!!:\n%v\n", resp.Err())
 		return nil, errUnauthorized{}
 	}
+	if resp.Val() == 1 { // exist
+		return nil, errUnauthorized{}
+	}
+	/*
+		f, err := os.OpenFile(jwtRevocationListFilePath, os.O_RDONLY|os.O_CREATE, 0644)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		if exist := func() bool {
+			muForFile.Lock()
+			defer muForFile.Unlock()
+
+			scanner := bufio.NewScanner(f)
+			for scanner.Scan() {
+				if reqJwt == scanner.Text() {
+					return true
+				}
+			}
+			return false
+		}(); exist {
+			return nil, errUnauthorized{}
+		}
+	*/
 
 	// get JwtPayload
 	claims, ok := token.Claims.(jwt.MapClaims)
@@ -110,17 +119,23 @@ func authenticationJwt(headerAuthorization string) (*jwtPayload, error) {
 }
 
 func revokeToken(jwt string) error {
-	f, err := os.OpenFile(jwtRevocationListFilePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	/*
+		f, err := os.OpenFile(jwtRevocationListFilePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
 
-	func() {
-		muForFile.Lock()
-		defer muForFile.Unlock()
-		fmt.Fprintln(f, jwt)
-	}()
+		func() {
+			muForFile.Lock()
+			defer muForFile.Unlock()
+			fmt.Fprintln(f, jwt)
+		}()
+	*/
+	resp := rdb.Set(context.Background(), jwt, "", 0)
+	if resp.Err() != nil {
+		return resp.Err()
+	}
 
 	return nil
 }
