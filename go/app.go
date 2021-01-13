@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/go-redis/redis/v8"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
@@ -1183,6 +1186,23 @@ func jwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+/* init */
+var (
+	rdb *redis.Client
+)
+
+func init() {
+	redisAddr := os.Getenv("REDIS_HOST")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	rdb = redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
+}
+
 /* main */
 
 func main() {
@@ -1224,10 +1244,12 @@ func main() {
 	defer dbx.Close()
 
 	jwtSecretKey = os.Getenv("JWT_SECRET_KEY")
-	jwtRevocationListFilePath = os.Getenv("REVOCATION_LIST_PATH")
-	if jwtRevocationListFilePath == "" {
-		jwtRevocationListFilePath = "./TokenRevocationList.dat"
-	}
+	/*
+		jwtRevocationListFilePath = os.Getenv("REVOCATION_LIST_PATH")
+		if jwtRevocationListFilePath == "" {
+			jwtRevocationListFilePath = "./TokenRevocationList.dat"
+		}
+	*/
 
 	e := echo.New()
 	e.Use(middleware.Logger())
@@ -1260,8 +1282,30 @@ func main() {
 	api.GET("/venues/:venue_id/timeslots", listTimeslots, jwtAuthMiddleware)
 	// initialize
 	api.POST("/initialize", func(c echo.Context) error {
+		// flush redis
+		if resp := rdb.FlushDB(context.Background()); resp.Err() != nil {
+			jsonify(c, http.StatusInternalServerError, respError{resp.Err().Error()})
+			return resp.Err()
+		}
+		// initialize redis
+		jwtArray := make([]interface{}, 1037900*2, 1037900*2)
+		f, err := os.OpenFile("/home/ptc-user/app/common/db/seed.list", os.O_RDONLY, 0644)
+		if err != nil {
+			jsonify(c, http.StatusInternalServerError, respError{err.Error()})
+			return err
+		}
+		scanner := bufio.NewScanner(f)
+		for i := 0; scanner.Scan(); i += 2 {
+			jwtArray[i] = scanner.Text()
+			jwtArray[i+1] = ""
+		}
+		if resp := rdb.MSet(context.Background(), jwtArray...); resp.Err() != nil {
+			jsonify(c, http.StatusInternalServerError, respError{resp.Err().Error()})
+			return resp.Err()
+		}
+		// initialize DB
 		if err := exec.Command("bash", "scripts/init.sh").Run(); err != nil {
-			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+			jsonify(c, http.StatusInternalServerError, respError{err.Error()})
 			return err
 		}
 		// 販促実施に応じて，ここの値を変更してください

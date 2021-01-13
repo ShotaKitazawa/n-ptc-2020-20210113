@@ -27,9 +27,9 @@ MYSQL_PWD=$MYSQL_PASSWORD mysql -h $MYSQL_HOST -u$MYSQL_USER $MYSQL_DATABASE -e 
 #MYSQL_PWD=$MYSQL_PASSWORD mysql -h $MYSQL_HOST -u$MYSQL_USER $MYSQL_DATABASE -e "ALTER TABLE users ADD INDEX username(username)"
 
 
-if [[ -f "$DB_DIR/seed.list" ]]; then
-    if [[ -f "${REVOCATION_LIST_TARGET}" ]]; then
-      rm ${REVOCATION_LIST_TARGET}
-    fi
-    cp "${DB_DIR}/seed.list" "${REVOCATION_LIST_TARGET}"
-fi
+#if [[ -f "$DB_DIR/seed.list" ]]; then
+#    if [[ -f "${REVOCATION_LIST_TARGET}" ]]; then
+#      rm ${REVOCATION_LIST_TARGET}
+#    fi
+#    cp "${DB_DIR}/seed.list" "${REVOCATION_LIST_TARGET}"
+#fi
