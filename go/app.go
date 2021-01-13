@@ -1288,20 +1288,25 @@ func main() {
 			return resp.Err()
 		}
 		// initialize redis
-		jwtArray := make([]interface{}, 1037900*2, 1037900*2)
 		f, err := os.OpenFile("/home/ptc-user/app/common/db/seed.list", os.O_RDONLY, 0644)
 		if err != nil {
 			jsonify(c, http.StatusInternalServerError, respError{err.Error()})
 			return err
 		}
 		scanner := bufio.NewScanner(f)
-		for i := 0; scanner.Scan(); i += 2 {
-			jwtArray[i] = scanner.Text()
-			jwtArray[i+1] = ""
-		}
-		if resp := rdb.MSet(context.Background(), jwtArray...); resp.Err() != nil {
-			jsonify(c, http.StatusInternalServerError, respError{resp.Err().Error()})
-			return resp.Err()
+		div := 10
+		for i := 0; i < div; i++ {
+			length := 1037900 * 2 / div
+			jwtArray := make([]interface{}, length, length)
+			for i := 0; i < length; i += 2 {
+				scanner.Scan()
+				jwtArray[i] = scanner.Text()
+				jwtArray[i+1] = ""
+			}
+			if resp := rdb.MSet(context.Background(), jwtArray...); resp.Err() != nil {
+				jsonify(c, http.StatusInternalServerError, respError{resp.Err().Error()})
+				return resp.Err()
+			}
 		}
 		// initialize DB
 		if err := exec.Command("bash", "scripts/init.sh").Run(); err != nil {
