@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"strconv"
@@ -1185,6 +1186,8 @@ func jwtAuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 /* main */
 
 func main() {
+	go http.ListenAndServe(":3000", nil)
+
 	host := os.Getenv("MYSQL_HOST")
 	if host == "" {
 		host = "127.0.0.1"
@@ -1264,7 +1267,7 @@ func main() {
 		// 販促実施に応じて，ここの値を変更してください
 		// 詳しくは，specを参照してください．
 		// https://portal.ptc.ntt.dev/spec.html#tag/other
-		return c.String(http.StatusOK, "1")  // 数値を string で第2引数に指定
+		return c.String(http.StatusOK, "1") // 数値を string で第2引数に指定
 	})
 	// public
 	e.Static("/", "public")
