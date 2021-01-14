@@ -12,6 +12,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -728,13 +729,37 @@ func putEventImage(c echo.Context) error {
 		return jsonify(c, http.StatusBadRequest, respError{"Restriction violation(s) occur."})
 	}
 
-	if _, err := dbx.Exec("UPDATE `events` SET `image` = ? WHERE id = ?",
-		base64.StdEncoding.EncodeToString([]byte(image)),
-		eventId,
-	); err != nil {
+	if err := func() error {
+		imagePath := fmt.Sprintf("/home/ptc-user/app/public/api/events/%d/image", eventId)
+
+		if err := os.MkdirAll(filepath.Dir(imagePath), 0777); err != nil {
+			return err
+		}
+
+		f, err := os.Create(imagePath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		_, err = f.Write(image)
+		if err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
 		jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
 		return err
 	}
+	/*
+		if _, err := dbx.Exec("UPDATE `events` SET `image` = ? WHERE id = ?",
+			base64.StdEncoding.EncodeToString([]byte(image)),
+			eventId,
+		); err != nil {
+			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+			return err
+		}
+	*/
 
 	return c.NoContent(http.StatusNoContent)
 }
