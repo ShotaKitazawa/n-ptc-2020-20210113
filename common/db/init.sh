@@ -24,8 +24,9 @@ MYSQL_PWD=$MYSQL_PASSWORD mysql -h $MYSQL_HOST -u$MYSQL_USER $MYSQL_DATABASE < $
 MYSQL_PWD=$MYSQL_PASSWORD mysql -h $MYSQL_HOST -u$MYSQL_USER $MYSQL_DATABASE -e "ALTER TABLE reservations ADD INDEX event_id(event_id)"
 MYSQL_PWD=$MYSQL_PASSWORD mysql -h $MYSQL_HOST -u$MYSQL_USER $MYSQL_DATABASE -e "ALTER TABLE reservations ADD INDEX event_id_user_id(event_id,user_id)"
 MYSQL_PWD=$MYSQL_PASSWORD mysql -h $MYSQL_HOST -u$MYSQL_USER $MYSQL_DATABASE -e "ALTER TABLE timeslots ADD INDEX event_id(event_id)"
+# 以下は実行済み
+#MYSQL_PWD=$MYSQL_PASSWORD mysql -h $MYSQL_HOST -u$MYSQL_USER $MYSQL_DATABASE -e "ALTER TABLE users CHANGE username username VARCHAR(32)"
 #MYSQL_PWD=$MYSQL_PASSWORD mysql -h $MYSQL_HOST -u$MYSQL_USER $MYSQL_DATABASE -e "ALTER TABLE users ADD INDEX username(username)"
-
 
 #if [[ -f "$DB_DIR/seed.list" ]]; then
 #    if [[ -f "${REVOCATION_LIST_TARGET}" ]]; then
