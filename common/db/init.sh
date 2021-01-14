@@ -11,6 +11,9 @@ MYSQL_PASSWORD=resu-ctp
 MYSQL_HOST=localhost
 REVOCATION_LIST_TARGET=/home/ptc-user/app/revocated_token.list
 
+# delete except initial data (image in local disk)
+ls /home/ptc-user/app/public/api/events | awk '{if ($0 > 3696) print $0}' | xargs -I{} rm -rf /home/ptc-user/app/public/api/events/{}
+
 # delete except initial data
 MYSQL_PWD=$MYSQL_PASSWORD mysql -h $MYSQL_HOST -u$MYSQL_USER $MYSQL_DATABASE -e "DELETE FROM users WHERE id > 10379"
 MYSQL_PWD=$MYSQL_PASSWORD mysql -h $MYSQL_HOST -u$MYSQL_USER $MYSQL_DATABASE -e "DELETE FROM events WHERE id > 3696"
