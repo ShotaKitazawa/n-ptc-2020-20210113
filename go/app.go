@@ -111,6 +111,7 @@ type respEventTmp struct {
 	CreatedAt  time.Time `db:"created_at"`
 	UpdatedAt  time.Time `db:"updated_at"`
 	Capacity   int64     `db:"capacity"`
+	NumOfResv  int64     `db:"num_of_resv"`
 }
 
 type respEvent struct {
@@ -404,12 +405,15 @@ func listEvents(c echo.Context) error {
 SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
  e.user_id AS artist_id, u.username AS artist_name, e.venue_id AS venue_id, v.name AS venue_name,
  e.start_at AS start_at, e.end_at AS end_at, e.price AS price,
- e.created_at AS created_at, e.updated_at AS updated_at
+ e.created_at AS created_at, e.updated_at AS updated_at, SUM(r.num_of_resv) AS num_of_resv
  FROM events e
  JOIN users u ON e.user_id = u.id
  JOIN venues v ON e.venue_id = v.id
+ JOIN reservations r ON e.id = r.event_id
  WHERE DATE(NOW()) <= e.start_at
  AND e.user_id = %d
+ GROUP BY e.id
+ ORDER BY e.id
  LIMIT ? OFFSET ?
 `, artistId)
 	} else {
@@ -417,11 +421,14 @@ SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
 SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
  e.user_id AS artist_id, u.username AS artist_name, e.venue_id AS venue_id, v.name AS venue_name,
  e.start_at AS start_at, e.end_at AS end_at, e.price AS price,
- e.created_at AS created_at, e.updated_at AS updated_at
+ e.created_at AS created_at, e.updated_at AS updated_at, SUM(r.num_of_resv) AS num_of_resv
  FROM events e
  JOIN users u ON e.user_id = u.id
  JOIN venues v ON e.venue_id = v.id
+ JOIN reservations r ON e.id = r.event_id
  WHERE DATE(NOW()) <= e.start_at
+ GROUP BY e.id
+ ORDER BY e.id
  LIMIT ? OFFSET ?
 `
 	}
@@ -436,11 +443,13 @@ SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
 	var resp []*respEvent
 	for _, result := range results {
 
-		var numOfResv int64
-		if err := dbx.QueryRowx("SELECT SUM(num_of_resv) FROM `reservations` WHERE event_id = ?", result.Id).Scan(&numOfResv); err != nil {
-			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
-			return err
-		}
+		/*
+			var numOfResv int64
+			if err := dbx.QueryRowx("SELECT SUM(num_of_resv) FROM `reservations` WHERE event_id = ?", result.Id).Scan(&numOfResv); err != nil {
+				jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+				return err
+			}
+		*/
 
 		var timeslotIds []int64
 		rowsTs, err := dbx.Queryx("SELECT id FROM `timeslots` WHERE event_id = ?", result.Id)
@@ -472,7 +481,7 @@ SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
 			CreatedAt:      result.CreatedAt,
 			UpdatedAt:      result.UpdatedAt,
 			Capacity:       result.Capacity,
-			CurrentReserve: numOfResv,
+			CurrentReserve: result.NumOfResv,
 		})
 
 	}
