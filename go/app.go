@@ -98,21 +98,19 @@ type reqEvent struct {
 }
 
 type respEventTmp struct {
-	Id             int64     `db:"id"`
-	Name           string    `db:"event_name"`
-	GenreId        int64     `db:"event_genre_id"`
-	ArtistId       int64     `db:"artist_id"`
-	ArtistName     string    `db:"artist_name"`
-	VenueId        int64     `db:"venue_id"`
-	VenueName      string    `db:"venue_name"`
-	StartAt        time.Time `db:"start_at"`
-	EndAt          time.Time `db:"end_at"`
-	Price          int64     `db:"price"`
-	TimeslotId     int64     `db:"timeslot_id"`
-	CreatedAt      time.Time `db:"created_at"`
-	UpdatedAt      time.Time `db:"updated_at"`
-	Capacity       int64     `db:"capacity"`
-	CurrentReserve int64     `db:"current_resv"`
+	Id         int64     `db:"id"`
+	Name       string    `db:"event_name"`
+	GenreId    int64     `db:"event_genre_id"`
+	ArtistId   int64     `db:"artist_id"`
+	ArtistName string    `db:"artist_name"`
+	VenueId    int64     `db:"venue_id"`
+	VenueName  string    `db:"venue_name"`
+	StartAt    time.Time `db:"start_at"`
+	EndAt      time.Time `db:"end_at"`
+	Price      int64     `db:"price"`
+	CreatedAt  time.Time `db:"created_at"`
+	UpdatedAt  time.Time `db:"updated_at"`
+	Capacity   int64     `db:"capacity"`
 }
 
 type respEvent struct {
@@ -405,31 +403,25 @@ func listEvents(c echo.Context) error {
 		query = fmt.Sprintf(`
 SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
  e.user_id AS artist_id, u.username AS artist_name, e.venue_id AS venue_id, v.name AS venue_name,
- e.start_at AS start_at, e.end_at AS end_at, e.price AS price, t.id AS timeslot_id,
- e.created_at AS created_at, e.updated_at AS updated_at, sum(r.num_of_resv) AS current_resv
+ e.start_at AS start_at, e.end_at AS end_at, e.price AS price,
+ e.created_at AS created_at, e.updated_at AS updated_at
  FROM events e
  JOIN users u ON e.user_id = u.id
  JOIN venues v ON e.venue_id = v.id
- JOIN timeslots t ON e.id = t.event_id
- LEFT JOIN reservations r ON e.id = r.event_id
  WHERE DATE(NOW()) <= e.start_at
  AND e.user_id = %d
- GROUP BY e.id, u.id, v.id, t.id
  LIMIT ? OFFSET ?
 `, artistId)
 	} else {
 		query = `
 SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
  e.user_id AS artist_id, u.username AS artist_name, e.venue_id AS venue_id, v.name AS venue_name,
- e.start_at AS start_at, e.end_at AS end_at, e.price AS price, t.id AS timeslot_id,
- e.created_at AS created_at, e.updated_at AS updated_at, sum(r.num_of_resv) AS current_resv
+ e.start_at AS start_at, e.end_at AS end_at, e.price AS price,
+ e.created_at AS created_at, e.updated_at AS updated_at
  FROM events e
  JOIN users u ON e.user_id = u.id
  JOIN venues v ON e.venue_id = v.id
- JOIN timeslots t ON e.id = t.event_id
- LEFT JOIN reservations r ON e.id = r.event_id
  WHERE DATE(NOW()) <= e.start_at
- GROUP BY e.id, u.id, v.id, t.id
  LIMIT ? OFFSET ?
 `
 	}
@@ -442,29 +434,47 @@ SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
 	}
 
 	var resp []*respEvent
-	var id int64
 	for _, result := range results {
-		if id == result.Id {
-			resp[len(resp)-1].TimeslotIds = append(resp[len(resp)-1].TimeslotIds, result.TimeslotId)
-		} else {
-			resp = append(resp, &respEvent{
-				Id:             result.Id,
-				Name:           result.Name,
-				GenreId:        result.GenreId,
-				ArtistId:       result.ArtistId,
-				ArtistName:     result.ArtistName,
-				VenueId:        result.VenueId,
-				VenueName:      result.VenueName,
-				StartAt:        result.StartAt,
-				EndAt:          result.EndAt,
-				Price:          result.Price,
-				TimeslotIds:    []int64{result.TimeslotId},
-				CreatedAt:      result.CreatedAt,
-				UpdatedAt:      result.UpdatedAt,
-				Capacity:       result.Capacity,
-				CurrentReserve: result.CurrentReserve,
-			})
+
+		var numOfResv int64
+		if err := dbx.QueryRowx("SELECT SUM(num_of_resv) FROM `reservations` WHERE event_id = ?", result.Id).Scan(&numOfResv); err != nil {
+			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+			return err
 		}
+
+		var timeslotIds []int64
+		rowsTs, err := dbx.Queryx("SELECT id FROM `timeslots` WHERE event_id = ?", result.Id)
+		if err != nil {
+			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+			return err
+		}
+		for rowsTs.Next() {
+			var timeslotId int64
+			if err = rowsTs.Scan(&timeslotId); err != nil {
+				jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+				return err
+			}
+			timeslotIds = append(timeslotIds, timeslotId)
+		}
+
+		resp = append(resp, &respEvent{
+			Id:             result.Id,
+			Name:           result.Name,
+			GenreId:        result.GenreId,
+			ArtistId:       result.ArtistId,
+			ArtistName:     result.ArtistName,
+			VenueId:        result.VenueId,
+			VenueName:      result.VenueName,
+			StartAt:        result.StartAt,
+			EndAt:          result.EndAt,
+			Price:          result.Price,
+			TimeslotIds:    timeslotIds,
+			CreatedAt:      result.CreatedAt,
+			UpdatedAt:      result.UpdatedAt,
+			Capacity:       result.Capacity,
+			CurrentReserve: numOfResv,
+		})
+
 	}
 
 	return jsonify(c, http.StatusOK, resp)
