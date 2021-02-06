@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	jwt "github.com/dgrijalva/jwt-go"
@@ -38,6 +39,10 @@ const (
 
 var (
 	dbx *sqlx.DB
+
+	//map[:event_id] = numOfResv
+	cacheNumOfResv      map[int64]int64
+	cacheNumOfResvMutex sync.Mutex
 )
 
 /* DB model & request/response */
@@ -441,10 +446,18 @@ SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
 	for _, result := range results {
 
 		var numOfResv int64
-		if err := dbx.QueryRowx("SELECT SUM(num_of_resv) FROM `reservations` WHERE event_id = ?", result.Id).Scan(&numOfResv); err != nil {
-			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
-			return err
+		cacheNumOfResvMutex.Lock()
+		numOfResv, ok := cacheNumOfResv[result.Id]
+		cacheNumOfResvMutex.Unlock()
+		if !ok {
+			numOfResv = 0
 		}
+		/*
+			if err := dbx.QueryRowx("SELECT SUM(num_of_resv) FROM `reservations` WHERE event_id = ?", result.Id).Scan(&numOfResv); err != nil {
+				jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+				return err
+			}
+		*/
 
 		var timeslotIds []int64
 		rowsTs, err := dbx.Queryx("SELECT id FROM `timeslots` WHERE event_id = ?", result.Id)
@@ -908,6 +921,7 @@ func listReservationsByUser(c echo.Context) error {
 	for rows.Next() {
 		var reservation Reservation
 		rows.StructScan(&reservation)
+
 		r, err := generateReservationResponse(dbx, &reservation)
 		if err != nil {
 			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
@@ -971,6 +985,7 @@ func listReservationsByEvent(c echo.Context) error {
 			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
 			return err
 		}
+
 		r, err := generateReservationResponse(dbx, &reservation)
 		if err != nil {
 			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
@@ -1081,6 +1096,10 @@ func createReservation(c echo.Context) error {
 	tx.Exec("UNLOCK TABLE")
 	tx.Commit()
 
+	cacheNumOfResvMutex.Lock()
+	cacheNumOfResv[eventId] += req.NumOfReserve
+	cacheNumOfResvMutex.Unlock()
+
 	reservation, err := getReservationById(dbx, reservationId)
 	if err != nil {
 		jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
@@ -1178,6 +1197,15 @@ func cancelReservation(c echo.Context) error {
 		jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
 		return err
 	}
+
+	var eventId, numOfResv int64
+	if err := dbx.QueryRow(`SELECT event_id,num_of_resv FROM reservations WHERE id = ?`, reservationId).Scan(&eventId, &numOfResv); err != nil {
+		jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+		return err
+	}
+	cacheNumOfResvMutex.Lock()
+	cacheNumOfResv[eventId] -= numOfResv
+	cacheNumOfResvMutex.Unlock()
 
 	return c.NoContent(http.StatusNoContent)
 }
@@ -1318,22 +1346,8 @@ var (
 )
 
 func init() {
-	redisAddr := os.Getenv("REDIS_HOST")
-	if redisAddr == "" {
-		redisAddr = "localhost:6379"
-	}
-	rdb = redis.NewClient(&redis.Options{
-		Addr:     redisAddr,
-		Password: "", // no password set
-		DB:       0,  // use default DB
-	})
-}
 
-/* main */
-
-func main() {
-	go http.ListenAndServe(":3000", nil)
-
+	/* MySQL */
 	host := os.Getenv("MYSQL_HOST")
 	if host == "" {
 		host = "127.0.0.1"
@@ -1355,7 +1369,6 @@ func main() {
 	if dbname == "" {
 		dbname = "isucari"
 	}
-
 	dbx, err = sqlx.Open("mysql", fmt.Sprintf(
 		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local",
 		user,
@@ -1367,6 +1380,51 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to DB: %s.", err.Error())
 	}
+
+	/* Redis */
+	redisAddr := os.Getenv("REDIS_HOST")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	rdb = redis.NewClient(&redis.Options{
+		Addr:     redisAddr,
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
+
+	if err := initCache(); err != nil {
+		panic(err)
+	}
+}
+
+func initCache() error {
+	/* hot reload of cache */
+	cacheNumOfResv = make(map[int64]int64, 16384)
+
+	rows, err := dbx.Queryx("SELECT e.id,SUM(num_of_resv) FROM `events` e LEFT JOIN `reservations` r ON e.id = r.event_id GROUP BY e.id")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var eventId int64
+		var numOfResv sql.NullInt64
+		if err := rows.Scan(&eventId, &numOfResv); err != nil {
+			return err
+		}
+		if numOfResv.Valid {
+			cacheNumOfResv[eventId] = numOfResv.Int64
+		} else {
+			cacheNumOfResv[eventId] = 0
+		}
+	}
+	return nil
+}
+
+/* main */
+
+func main() {
+	go http.ListenAndServe(":3000", nil)
+
 	defer dbx.Close()
 
 	jwtSecretKey = os.Getenv("JWT_SECRET_KEY")
@@ -1442,6 +1500,14 @@ func main() {
 		// 販促実施に応じて，ここの値を変更してください
 		// 詳しくは，specを参照してください．
 		// https://portal.ptc.ntt.dev/spec.html#tag/other
+
+		// caching
+		if err := initCache(); err != nil {
+			jsonify(c, http.StatusInternalServerError, respError{err.Error()})
+			return err
+		}
+
+		// return
 		return c.String(http.StatusOK, "3") // 数値を string で第2引数に指定
 	})
 	// public

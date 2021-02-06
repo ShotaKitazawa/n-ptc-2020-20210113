@@ -97,20 +97,26 @@ func getEventResponse(db sqlx.Queryer, event *Event) (*respEvent, error) {
 		return nil, err
 	}
 
-	var reservations []*Reservation
-	var currentReserve int64
-	rowsResv, err := db.Queryx("SELECT * FROM `reservations` WHERE event_id = ?", event.Id)
-	if err != nil {
-		return nil, err
-	}
-	for rowsResv.Next() {
-		var reservation Reservation
-		if err := rowsResv.StructScan(&reservation); err != nil {
+	/*
+		var reservations []*Reservation
+		var currentReserve int64
+		rowsResv, err := db.Queryx("SELECT * FROM `reservations` WHERE event_id = ?", event.Id)
+		if err != nil {
 			return nil, err
 		}
-		reservations = append(reservations, &reservation)
-		currentReserve += reservation.NumOfReserve
-	}
+		for rowsResv.Next() {
+			var reservation Reservation
+			if err := rowsResv.StructScan(&reservation); err != nil {
+				return nil, err
+			}
+			reservations = append(reservations, &reservation)
+			currentReserve += reservation.NumOfReserve
+		}
+	*/
+	var currentReserve int64
+	cacheNumOfResvMutex.Lock()
+	currentReserve = cacheNumOfResv[event.Id]
+	cacheNumOfResvMutex.Unlock()
 
 	var timeslotIds []int64
 	rowsTs, err := db.Queryx("SELECT id FROM `timeslots` WHERE event_id = ?", event.Id)
