@@ -97,6 +97,22 @@ type reqEvent struct {
 	EndAt       time.Time `json:"end_at"`
 }
 
+type respEventTmp struct {
+	Id         int64     `db:"id"`
+	Name       string    `db:"event_name"`
+	GenreId    int64     `db:"event_genre_id"`
+	ArtistId   int64     `db:"artist_id"`
+	ArtistName string    `db:"artist_name"`
+	VenueId    int64     `db:"venue_id"`
+	VenueName  string    `db:"venue_name"`
+	StartAt    time.Time `db:"start_at"`
+	EndAt      time.Time `db:"end_at"`
+	Price      int64     `db:"price"`
+	CreatedAt  time.Time `db:"created_at"`
+	UpdatedAt  time.Time `db:"updated_at"`
+	Capacity   int64     `db:"capacity"`
+}
+
 type respEvent struct {
 	Id             int64     `json:"id"`
 	Name           string    `json:"event_name"`
@@ -356,14 +372,65 @@ func listEvents(c echo.Context) error {
 		return nil
 	}
 
-	query := "SELECT id, user_id, venue_id, eventgenre_id, name, start_at, end_at, price, created_at, updated_at FROM `events` WHERE DATE(NOW()) <= start_at"
-	if artistId != 0 {
-		query += fmt.Sprintf(" AND user_id = %d", artistId)
-	}
-	query += " LIMIT ? OFFSET ?"
+	/*
+		query := "SELECT id, user_id, venue_id, eventgenre_id, name, start_at, end_at, price, created_at, updated_at FROM `events` WHERE DATE(NOW()) <= start_at"
+		if artistId != 0 {
+			query += fmt.Sprintf(" AND user_id = %d", artistId)
+		}
+		query += " LIMIT ? OFFSET ?"
 
-	events := []*Event{}
-	if err := dbx.Select(&events, query, limit, offset); err != nil {
+		events := []*Event{}
+		if err := dbx.Select(&events, query, limit, offset); err != nil {
+			if err != sql.ErrNoRows {
+				jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+				return err
+			}
+		}
+
+		var resp []*respEvent
+		for _, event := range events {
+			e, err := getEventResponse(dbx, event)
+			if err != nil {
+				jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+				return err
+			}
+			resp = append(resp, e)
+		}
+	*/
+	var query string
+	var results []*respEventTmp
+	if artistId != 0 {
+		query = fmt.Sprintf(`
+SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
+ e.user_id AS artist_id, u.username AS artist_name, e.venue_id AS venue_id, v.name AS venue_name,
+ e.start_at AS start_at, e.end_at AS end_at, e.price AS price,
+ e.created_at AS created_at, e.updated_at AS updated_at
+ FROM events e
+ JOIN users u ON e.user_id = u.id
+ JOIN venues v ON e.venue_id = v.id
+ WHERE DATE(NOW()) <= e.start_at
+ AND e.user_id = %d
+ GROUP BY e.id
+ ORDER BY e.id
+ LIMIT ? OFFSET ?
+`, artistId)
+	} else {
+		query = `
+SELECT e.id AS id, e.name AS event_name, e.eventgenre_id AS event_genre_id,
+ e.user_id AS artist_id, u.username AS artist_name, e.venue_id AS venue_id, v.name AS venue_name,
+ e.start_at AS start_at, e.end_at AS end_at, e.price AS price,
+ e.created_at AS created_at, e.updated_at AS updated_at
+ FROM events e
+ JOIN users u ON e.user_id = u.id
+ JOIN venues v ON e.venue_id = v.id
+ WHERE DATE(NOW()) <= e.start_at
+ GROUP BY e.id
+ ORDER BY e.id
+ LIMIT ? OFFSET ?
+`
+	}
+
+	if err := dbx.Select(&results, query, limit, offset); err != nil {
 		if err != sql.ErrNoRows {
 			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
 			return err
@@ -371,13 +438,47 @@ func listEvents(c echo.Context) error {
 	}
 
 	var resp []*respEvent
-	for _, event := range events {
-		e, err := getEventResponse(dbx, event)
+	for _, result := range results {
+
+		var numOfResv int64
+		if err := dbx.QueryRowx("SELECT SUM(num_of_resv) FROM `reservations` WHERE event_id = ?", result.Id).Scan(&numOfResv); err != nil {
+			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+			return err
+		}
+
+		var timeslotIds []int64
+		rowsTs, err := dbx.Queryx("SELECT id FROM `timeslots` WHERE event_id = ?", result.Id)
 		if err != nil {
 			jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
 			return err
 		}
-		resp = append(resp, e)
+		for rowsTs.Next() {
+			var timeslotId int64
+			if err = rowsTs.Scan(&timeslotId); err != nil {
+				jsonify(c, http.StatusInternalServerError, respError{"Internal server error."})
+				return err
+			}
+			timeslotIds = append(timeslotIds, timeslotId)
+		}
+
+		resp = append(resp, &respEvent{
+			Id:             result.Id,
+			Name:           result.Name,
+			GenreId:        result.GenreId,
+			ArtistId:       result.ArtistId,
+			ArtistName:     result.ArtistName,
+			VenueId:        result.VenueId,
+			VenueName:      result.VenueName,
+			StartAt:        result.StartAt,
+			EndAt:          result.EndAt,
+			Price:          result.Price,
+			TimeslotIds:    timeslotIds,
+			CreatedAt:      result.CreatedAt,
+			UpdatedAt:      result.UpdatedAt,
+			Capacity:       result.Capacity,
+			CurrentReserve: numOfResv,
+		})
+
 	}
 
 	return jsonify(c, http.StatusOK, resp)
